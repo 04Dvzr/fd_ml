@@ -7,7 +7,7 @@ from functools import reduce
 
 #从source_dir复制num个jpg图片到data_dir
 def data_copy(source_dir, data_dir, num, seed = 123456789):
-    files = os.listdir(source_dir)
+    files = os.listdir(os.path.abspath(source_dir))
     if num >= len(files) / 2:
         num_files = math.floor(len(files) / 2)
         num_loop = math.floor(num / num_files)
@@ -22,12 +22,12 @@ def data_copy(source_dir, data_dir, num, seed = 123456789):
         a = random.sample(range(len(files)), num_files)
         for x in range(num_files) :
             counter += 1
-            shutil.copyfile(source_dir + files[a[x]], data_dir + str(counter) + ".jpg")
+            shutil.copyfile(os.path.join(os.path.abspath(source_dir), files[a[x]]), os.path.join(os.path.abspath(data_dir), (str(counter) + ".jpg")))
     random.seed(seed + num_loop + 1)
     a = random.sample(range(len(files)), remain_files)
     for x in range(remain_files):
         counter += 1 
-        shutil.copyfile(source_dir + files[a[x]], data_dir + str(counter) + ".jpg")
+        shutil.copyfile(os.path.join(os.path.abspath(source_dir), files[a[x]]), os.path.join(os.path.abspath(data_dir), (str(counter) + ".jpg")))
     # print("copy done")
     
 #生成指定和为maxValue的num个随机数(适用于多0，种类数目大于抽样个数的)
@@ -56,20 +56,20 @@ def random_num_with_fix_total(maxValue, num, seed):
     return b
 
     
-def data_create_niid(image_folder_dir, num_of_batch, batch_size, IID_rate, seed = 123456789):     
-    img_kinds_list = os.listdir(image_folder_dir)
+def data_create_niid(image_folder_dir, dst_folder_dir, num_of_batch, batch_size, IID_rate, seed = 123456789):     
+    img_kinds_list = os.listdir(os.path.abspath(image_folder_dir))
     if IID_rate < 50:
         print("make rate higher than 50")
         return -1
     for x in range(num_of_batch):
-        data_dir = r'data_non_iid_' + str(x) + '/'
+        data_dir = os.path.join(os.path.abspath(dst_folder_dir), (r'data_non_iid_' + str(x)))
         if not os.path.exists(data_dir):
             os.makedirs(data_dir)
-        print(f'创建文件夹{data_dir}成功！')
+            print(f'创建文件夹{data_dir}成功！')
         
         random.seed(seed + x)
         main_lebel = random.randint(0, len(img_kinds_list) - 1)
-        main_data_dir = data_dir + img_kinds_list[main_lebel] + "/"   
+        main_data_dir = os.path.join(data_dir, img_kinds_list[main_lebel])
         main_label_num = math.floor(batch_size * IID_rate / 100)
         
         if (batch_size - main_label_num) <= (len(img_kinds_list) - 1) * 1.2:
@@ -80,48 +80,55 @@ def data_create_niid(image_folder_dir, num_of_batch, batch_size, IID_rate, seed 
         if not os.path.exists(main_data_dir):
             os.makedirs(main_data_dir)
             print(f'创建文件夹{main_data_dir}成功！')
-        data_copy(image_folder_dir + img_kinds_list[main_lebel] + "/", main_data_dir, main_label_num, seed + x)
+        data_copy(os.path.join(os.path.abspath(image_folder_dir), img_kinds_list[main_lebel]), main_data_dir, main_label_num, seed + x)
         num_sub_files = 0
         for y in img_kinds_list:   
-            num_sub_files += 1   
             if y != img_kinds_list[main_lebel]:
                 if other_list[num_sub_files] == 0:
                     continue
-                sub_data_dir = data_dir + y + "/"       
+                sub_data_dir = os.path.join(data_dir, y)     
                 if not os.path.exists(sub_data_dir):
                     os.makedirs(sub_data_dir)
                     print(f'创建文件夹{sub_data_dir}成功！')
-                data_copy(image_folder_dir + y + "/", sub_data_dir, other_list[num_sub_files], seed + x)
+                data_copy(os.path.join(os.path.abspath(image_folder_dir), y), sub_data_dir, other_list[num_sub_files], seed + x)
             else:
-                num_sub_files -= 1
-        print("batch %d done" %x)
+                continue
+            num_sub_files += 1
+        print("batch %d done" %(x + 1))
     print("data non iid create done")
     
     
-def data_create_iid(image_folder_dir, num_of_batch, batch_size, seed = 123456789):  
-    img_kinds_list = os.listdir(image_folder_dir)
+def data_create_iid(image_folder_dir, dst_folder_dir, num_of_batch, batch_size, seed = 123456789):  
+    img_kinds_list = os.listdir(os.path.abspath(image_folder_dir))
     for x in range(num_of_batch):
-        data_dir = r'data_iid_' + str(x) + '/'
+        data_dir = os.path.join(os.path.abspath(dst_folder_dir), (r'data_iid_' + str(x)))
         if not os.path.exists(data_dir):
             os.makedirs(data_dir)
         print(f'创建文件夹{data_dir}成功！')
                 
         if batch_size <= len(img_kinds_list) * 1.2:
             other_list = random_fixed(batch_size, len(img_kinds_list), seed + x)
-        else :
+        elif batch_size <= len(img_kinds_list) * 3:
             other_list = random_num_with_fix_total(batch_size, len(img_kinds_list), seed + x)
-        
+        else:
+            val = batch_size // len(img_kinds_list) 
+            other_list = [val - 1] * len(img_kinds_list)
+            remians = batch_size % len(img_kinds_list) 
+            for i in range(remians + len(img_kinds_list)):
+                random.seed(seed + i)
+                other_list[random.randint(0, len(img_kinds_list) - 1)] += 1               
+                
         num_sub_files = 0
-        for y in img_kinds_list:   
-            num_sub_files += 1   
+        for y in img_kinds_list:              
             if other_list[num_sub_files] == 0:
                 continue
-            sub_data_dir = data_dir + y + "/"       
+            sub_data_dir = os.path.join(data_dir, y)    
             if not os.path.exists(sub_data_dir):
                 os.makedirs(sub_data_dir)
                 print(f'创建文件夹{sub_data_dir}成功！')
-            data_copy(image_folder_dir + y + "/", sub_data_dir, other_list[num_sub_files], seed + x)
-        print("batch %d done" %x)
+            data_copy(os.path.join(os.path.abspath(image_folder_dir), y), sub_data_dir, other_list[num_sub_files], seed + x)
+            num_sub_files += 1
+        print("batch %d done" %(x + 1))            
     print("data iid create done")
     
     
@@ -130,6 +137,6 @@ def data_create_iid(image_folder_dir, num_of_batch, batch_size, seed = 123456789
 if __name__ == '__main__':
     if(len(sys.argv) <= 5):
         sys.exit(-1)
-    data_create_niid(sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]))        
-
+    data_create_niid(sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6]))        
+    data_create_iid(sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[6]))
 
