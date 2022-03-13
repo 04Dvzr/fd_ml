@@ -200,20 +200,20 @@ class FL_system():
         # self.updater = updater
         self.client = []
         self.server = FL_server(net)
-        for i in num_clients:
+        for i in range(num_clients):
             self.client.append(FL_clients(net, train_data, test_data, loss, updater))
             self.client[i].update_in_weight(self.server.sum_w)
             
     def round_w (self) -> list:
         temp_weight = []
-        for i in self.num:
+        for i in range(self.num):
             self.client[i].train_epoch(1)
             temp_weight.append(self.client[i].show_weight())
         return temp_weight
         
     def round_g (self) -> list:
         temp_grad = []
-        for i in self.num:
+        for i in range(self.num):
             self.client[i].train_epoch(1)
             temp_grad.append(self.client[i].show_grad())
         return temp_grad
