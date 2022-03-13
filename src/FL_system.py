@@ -1,3 +1,6 @@
+from calendar import c
+from distutils.log import debug
+from http import client
 import torch
 import torch.nn as nn
 import copy
@@ -6,7 +9,6 @@ argmax = lambda x, *args, **kwargs: x.argmax(*args, **kwargs)
 astype = lambda x, *args, **kwargs: x.type(*args, **kwargs)
 reduce_sum = lambda x, *args, **kwargs: x.sum(*args, **kwargs)
 size = lambda x, *args, **kwargs: x.numel(*args, **kwargs)
-
 
 def accuracy(y_hat, y):
     """Compute the number of correct predictions."""
@@ -42,7 +44,7 @@ class Accumulator:
     
     
 class FL_server():
-    def __init__(self, net, weight_l=[], client_list = []):   # weight_l 为list类型
+    def __init__(self, net, weight_l=[]):   # weight_l 为list类型
         self.list_p = []
         self.sum_w = []
         if weight_l:
@@ -57,9 +59,7 @@ class FL_server():
             self.list_p.append(temp)            
             self.sum_w = temp
             
-        self.num = len(self.list_p)
-        self.clients = client_list
-        
+        self.num = len(self.list_p)        
         
         def init_weights(m):
             if type(m) == nn.Linear or type(m) == nn.Conv2d:
@@ -69,8 +69,7 @@ class FL_server():
                 m.bias.data.fill_(0)
         self.nets = copy.deepcopy(net)     
         self.nets.apply(init_weights)
-            
-    
+               
     def __str__(self):
         return ("net: {}; num: {}; list: {}; adder: {}".format(self.nets, self.num, self.list_p, self.sum_w))
         
@@ -80,37 +79,41 @@ class FL_server():
     
     def __len__(self):
         return self.num
-       
-    def get_grad(self, client):
+
+    def convent_list(self, net):
         temp = []
-        for a in client.parameters():
-            temp.append(a.data)
+        for datas in net.parameters():
+            temp.append(datas.data)
+        return temp
+               
+    def get_sum(self, clients):     # clients 为list类型
+        temp = []
+        for a in clients :
+            if temp:
+                for i in range(len(a)):
+                    temp[i] += a[i]
+            else:
+                temp = a
         return temp
     
     def add_to(self, client):
-        if self.sum_w:
-            for con, val in enumerate(self.sum_w):
-                self.sum_w[con] = self.get_grad(client)[con] + val
+        if(type(client)==list):
+            if self.sum_w:
+                assert len(self.sum_w) == len(client)
+                for a, b in zip(self.sum_w, client):
+                    a += b
+            else:
+                self.sum_w = client
         else:
-            for i in client.parameters():
-                self.sum_w.append(i.data)
+            temp = self.convent_list(client)
+            if self.sum_w:
+                assert len(self.sum_w) == len(temp)
+                for con, val in enumerate(self.sum_w):
+                    self.sum_w[con] = temp[con] + val
+            else:
+                    self.sum_w = temp
         self.num += 1          
-                    
-                    
-    def fl_avg(self):
-        assert len(self.sum_w) > 0 
-        for a, b in zip(self.nets.parameters(), self.sum_w):
-            a.data = b / self.num
-        self.sum_w.clear()
-        return self.nets
-    
-    
-    def trim_weight (self):
-        max = self.weight_l[0]
-        for x in self.weight_l:
-            if max < x:
-                max = x
-    
+                                                  
     
 class FL_clients():
     def __init__(self, nets, train_data, test_data, loss_func, updata) -> None:
@@ -122,9 +125,7 @@ class FL_clients():
             self.pre_weight = []
             for i in nets.parameters():
                 self.pre_weight.append(i.data)
-            # self.pre_weight = copy.deepcopy(nets)
-            
-            
+                       
     def train_batch (self):
         self.net.train()
         metric = Accumulator(3)
@@ -133,7 +134,7 @@ class FL_clients():
             # 计算梯度并更新参数
             y_hat = self.net(X)
             l = self.loss(y_hat, y)
-            if isinstance(self.updater, torch.optim.Optimizer):
+            if isinstance(self.updater, torch.optim.Optimizer): 
                 # 使用PyTorch内置的优化器和损失函数
                 self.updater.zero_grad()
                 l.backward()
@@ -154,27 +155,86 @@ class FL_clients():
             test_acc = evaluate_accuracy(self.net, self.test)
             train_loss, train_acc = train_metrics
             print("in epoch:%d, train_loss = %.3f, train_acc = %.3f, test_acc = %.3f" %(epoch, train_loss, train_acc, test_acc))
-
+            
+    def show_weight (self):
+        temp = []
+        for t in self.net.parameters():
+            temp.append(t.data)
+        return temp
     
-    def cal_grad (self):
-        # temp = copy.deepcopy(self.net)
-        # for t, x in zip(temp.parameters(), self.pre_weight.parameters()):
-        #     t.data = t.data - x.data
+    def show_grad (self):
         temp = []
         for t, x in zip(self.net.parameters(), self.pre_weight):
             temp.append(t.data - x)
         return temp
     
     def update_in_weight (self, weight):
-        # for x, y in zip(self.pre_weight.parameters(), self.net.parameters()):
-        #     x.data = y.data
-        
         self.pre_weight.clear()
         for x in self.net.parameters():
             self.pre_weight.append(x.data)
             
         for x, y in zip(weight, self.net.parameters()):
-            y.data = x.data
+            y.data = x
     
+    def update_in_grad (self, grad):
+        for x, y in zip(grad, self.net.parameters()):
+            y.data = x + y.data
+            
+        self.pre_weight.clear()
+        for x in self.net.parameters():
+            self.pre_weight.append(x.data)
+
+    def apply_net (self, nets):
+        self.net = copy.deepcopy(nets)
+
+
     
+class FL_system():
+    def __init__(self, train_data, test_data, net, loss, updater, num_clients, num_epoch) -> None:
+        self.train = train_data
+        self.test = test_data
+        self.epoch = num_epoch
+        self.net = net
+        self.num = num_clients
+        # self.loss = loss
+        # self.updater = updater
+        self.client = []
+        self.server = FL_server(net)
+        for i in num_clients:
+            self.client.append(FL_clients(net, train_data, test_data, loss, updater))
+            self.client[i].update_in_weight(self.server.sum_w)
+            
+    def round_w (self) -> list:
+        temp_weight = []
+        for i in self.num:
+            self.client[i].train_epoch(1)
+            temp_weight.append(self.client[i].show_weight())
+        return temp_weight
+        
+    def round_g (self) -> list:
+        temp_grad = []
+        for i in self.num:
+            self.client[i].train_epoch(1)
+            temp_grad.append(self.client[i].show_grad())
+        return temp_grad
     
+    def update (self):
+        # define own update function
+        pass
+    
+    def fl_avg_w(self):
+        sum = []
+        tmp = self.round_w()
+        for i in tmp:
+            if sum:
+                for a, b in zip(sum, i):
+                    a += b
+            else:
+                sum = i
+                
+        for i, para in enumerate(self.server.nets.parameters()) :
+            sum[i] /= len(tmp)
+            para.data = sum[i]
+        
+        for i in self.num:
+            client[i].apply_net(self.server.nets)
