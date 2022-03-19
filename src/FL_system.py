@@ -1,9 +1,8 @@
-from calendar import c
-from distutils.log import debug
-from http import client
-import torch
+import torch, torchvision
 import torch.nn as nn
-import copy
+from torch.utils import data as _data
+import copy, os, sys, time, re
+import torch.utils.tensorboard as tb
 
 argmax = lambda x, *args, **kwargs: x.argmax(*args, **kwargs)
 astype = lambda x, *args, **kwargs: x.type(*args, **kwargs)
@@ -28,6 +27,41 @@ def evaluate_accuracy(net, data_iter):
             metric.add(accuracy(net(X), y), size(y))
     return metric[0] / metric[1]
 
+def evaluate_accuracy_gpu(net, data_iter, device=None):
+    """Compute the accuracy for a model on a dataset using a GPU.
+
+    Defined in :numref:`sec_lenet`"""
+    if isinstance(net, nn.Module):
+        net.eval()  # Set the model to evaluation mode
+        if not device:
+            device = next(iter(net.parameters())).device
+    # No. of correct predictions, no. of predictions
+    metric = Accumulator(2)
+
+    with torch.no_grad():
+        for X, y in data_iter:
+            if isinstance(X, list):
+                # Required for BERT Fine-tuning (to be covered later)
+                X = [x.to(device) for x in X]
+            else:
+                X = X.to(device)
+            y = y.to(device)
+            metric.add(accuracy(net(X), y), size(y))
+    return metric[0] / metric[1]
+
+def creat_data (train_dir, batch_size=16, shuffles=False):
+    if shuffles:        
+        # rans = torchvision.transforms.Compose([torchvision.transforms.Grayscale(), torchvision.transforms.Resize((28, 28),), torchvision.transforms.ToTensor()])
+        rans = torchvision.transforms.Compose([torchvision.transforms.Resize((224, 224),), torchvision.transforms.AutoAugment(), torchvision.transforms.ToTensor()])
+    else:
+        rans = torchvision.transforms.Compose([torchvision.transforms.Resize((224, 224),), torchvision.transforms.ToTensor()])
+        # rans = torchvision.transforms.Compose([torchvision.transforms.Grayscale(), torchvision.transforms.Resize((28, 28),), torchvision.transforms.ToTensor()])
+    tr = torchvision.datasets.ImageFolder(os.path.abspath(train_dir), transform=rans)
+    
+    train = _data.DataLoader(tr, batch_size, shuffle=shuffles, num_workers=4)
+    
+    return train
+
 class Accumulator:
     """For accumulating sums over `n` variables."""
     def __init__(self, n):
@@ -44,31 +78,17 @@ class Accumulator:
     
     
 class FL_server():
-    def __init__(self, net, weight_l=[]):   # weight_l 为list类型
-        self.list_p = []
-        self.sum_w = []
-        if weight_l:
-            self.list_p = weight_l  
-            for li in weight_l:
-                for da in li:   
-                    self.sum_w.append(da)
-        else:
-            temp = []
-            for i in net.parameters():
-                temp.append(i.data)              
-            self.list_p.append(temp)            
-            self.sum_w = temp
-            
-        self.num = len(self.list_p)        
-        
+    def __init__(self, net, test_data):   # weight_l 为list类型
         def init_weights(m):
             if type(m) == nn.Linear or type(m) == nn.Conv2d:
                 nn.init.xavier_normal_(m.weight)
             elif type(m) == nn.BatchNorm2d:
                 m.weight.data.normal_(1.0,0.02) 
                 m.bias.data.fill_(0)
-        self.nets = copy.deepcopy(net)     
-        self.nets.apply(init_weights)
+                
+        self.net = copy.deepcopy(net)     
+        self.net.apply(init_weights)
+        self.data = test_data      
                
     def __str__(self):
         return ("net: {}; num: {}; list: {}; adder: {}".format(self.nets, self.num, self.list_p, self.sum_w))
@@ -76,44 +96,20 @@ class FL_server():
     def __getitem__(self, index):
         assert (index < self.num)
         return self.list_p[index]
-    
-    def __len__(self):
-        return self.num
 
-    def convent_list(self, net):
-        temp = []
-        for datas in net.parameters():
-            temp.append(datas.data)
-        return temp
-               
-    def get_sum(self, clients):     # clients 为list类型
-        temp = []
-        for a in clients :
-            if temp:
-                for i in range(len(a)):
-                    temp[i] += a[i]
-            else:
-                temp = a
-        return temp
+    def eval_test(self):
+        test_acc = evaluate_accuracy(self.net, self.data)                                                                      
+        print("server test_acc = %.3f" %(test_acc))
     
-    def add_to(self, client):
-        if(type(client)==list):
-            if self.sum_w:
-                assert len(self.sum_w) == len(client)
-                for a, b in zip(self.sum_w, client):
-                    a += b
-            else:
-                self.sum_w = client
-        else:
-            temp = self.convent_list(client)
-            if self.sum_w:
-                assert len(self.sum_w) == len(temp)
-                for con, val in enumerate(self.sum_w):
-                    self.sum_w[con] = temp[con] + val
-            else:
-                    self.sum_w = temp
-        self.num += 1          
-                                                  
+    def apply_dict(self, dict : dict):
+        self.net.load_state_dict(copy.deepcopy(dict))
+            
+    def show_weight (self):
+        temp = []
+        for t in self.net.parameters():
+            temp.append(t.data.clone())
+        return temp
+
     
 class FL_clients():
     def __init__(self, nets, train_data, test_data, loss_func, updata) -> None:
@@ -121,97 +117,147 @@ class FL_clients():
             self.data = train_data
             self.test = test_data
             self.loss = loss_func
-            self.updater = updata
-            self.pre_weight = []
-            for i in nets.parameters():
-                self.pre_weight.append(i.data)
+            self.updater = updata #in str
+            self.pre_dict = copy.deepcopy(nets.state_dict())
                        
     def train_batch (self):
-        self.net.train()
         metric = Accumulator(3)
-        
+        updater = eval(self.updater)
+        self.net.train()
         for X, y in self.data:
             # 计算梯度并更新参数
             y_hat = self.net(X)
             l = self.loss(y_hat, y)
-            if isinstance(self.updater, torch.optim.Optimizer): 
+            if isinstance(updater, torch.optim.Optimizer): 
                 # 使用PyTorch内置的优化器和损失函数
-                self.updater.zero_grad()
+                updater.zero_grad()
                 l.backward()
-                self.updater.step()
+                updater.step()
                 metric.add(float(l) * len(y), accuracy(y_hat, y),
                             y.size().numel())
             else:
                 # 使用定制的优化器和损失函数
                 l.sum().backward()
-                self.updater(X.shape[0])
+                updater(X.shape[0])
                 metric.add(float(l.sum()), accuracy(y_hat, y), y.numel())
         # 返回训练损失和训练准确率
         return metric[0] / metric[2], metric[1] / metric[2]
+ 
+    def train_batch_gpu(self, device):
+        
+        updater = eval(self.updater)
+        metric = Accumulator(3)
+        self.net.train()
+        for X, y in self.data:
+            updater.zero_grad()
+            X, y = X.to(device), y.to(device)
+            y_hat = self.net(X)
+            l = self.loss(y_hat, y)
+            l.backward()
+            updater.step()
+            with torch.no_grad():
+                metric.add(l * X.shape[0], accuracy(y_hat, y), X.shape[0])
+            train_l = metric[0] / metric[2]
+            train_acc = metric[1] / metric[2]
+        self.net.to('cpu')
+        return train_l, train_acc    
     
-    def train_epoch (self, num):
-        for epoch in range(num):
-            train_metrics = self.train_batch()
+    def train_epoch (self, device=None):
+        if device == None:
+            train_loss, train_acc = self.train_batch()            
             test_acc = evaluate_accuracy(self.net, self.test)
-            train_loss, train_acc = train_metrics
-            print("in epoch:%d, train_loss = %.3f, train_acc = %.3f, test_acc = %.3f" %(epoch, train_loss, train_acc, test_acc))
+        else:
+            self.net.to(device)
+            train_loss, train_acc = self.train_batch_gpu(device)
+            test_acc = evaluate_accuracy_gpu(self.net, self.test)
+            self.net.to('cpu')
+        print(" , train_loss = %.3f, train_acc = %.3f, test_acc = %.3f" %(train_loss, train_acc, test_acc))
+        torch.cuda.empty_cache()
+    
+    def train_epoch_mul (self, num, device=None):
+        train_loss = 0.0
+        train_acc = 0.0
+        test_acc = 0.0
+        if device == None:
+            for _ in range(num):
+                loss, acc = self.train_batch()
+                train_loss += loss  
+                train_acc  += acc
+                test_acc += evaluate_accuracy(self.net, self.test)
+        else:
+            for _ in range(num):
+                self.net.to(device)
+                loss, acc = self.train_batch_gpu(device) 
+                train_loss += loss  
+                train_acc  += acc
+                test_acc += evaluate_accuracy_gpu(self.net, self.test)
+                self.net.to('cpu')
+            torch.cuda.empty_cache()
+        print(" , train_loss = %.3f, train_acc = %.3f, test_acc = %.3f" %(train_loss/num, train_acc/num, test_acc/num))
             
     def show_weight (self):
         temp = []
         for t in self.net.parameters():
-            temp.append(t.data)
+            temp.append(t.data.clone())
         return temp
     
-    def show_grad (self):
-        temp = []
-        for t, x in zip(self.net.parameters(), self.pre_weight):
-            temp.append(t.data - x)
-        return temp
+    def show_grad (self) -> dict :
+        tmp = copy.deepcopy(self.net.state_dict())
+        for a, b in zip(self.pre_dict, tmp):
+            if re.search('.*running.*', a) or re.search('.*batch.*', a):
+                continue
+            tmp[b] -= self.pre_dict[a]   
+        return tmp
     
-    def update_in_weight (self, weight):
-        self.pre_weight.clear()
-        for x in self.net.parameters():
-            self.pre_weight.append(x.data)
-            
-        for x, y in zip(weight, self.net.parameters()):
-            y.data = x
-    
-    def update_in_grad (self, grad):
-        for x, y in zip(grad, self.net.parameters()):
-            y.data = x + y.data
-            
-        self.pre_weight.clear()
-        for x in self.net.parameters():
-            self.pre_weight.append(x.data)
-
     def apply_net (self, nets):
         self.net = copy.deepcopy(nets)
-
+        
+    def apply_dict(self, dict : dict):
+        self.net.load_state_dict(copy.deepcopy(dict))
+               
+    def eval_test(self):
+        test_acc = evaluate_accuracy(self.net, self.test)                                                                      
+        print("client test_acc = %.3f" %(test_acc))
+        
 
     
 class FL_system():
-    def __init__(self, train_data, test_data, net, loss, updater, num_clients, num_epoch) -> None:
-        self.train = train_data
-        self.test = test_data
+    def __init__(self, train_data_dir, test_data_dir, net, loss, updater:str, num_clients, num_epoch, log_on : bool = False) -> None:
+        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        self.train = []
+        tr_list = os.listdir(os.path.abspath(train_data_dir))
+        assert len(tr_list) >= num_clients
+        for dir in tr_list:
+            self.train.append(creat_data(os.path.join(os.path.abspath(train_data_dir), dir) , 32, shuffles=True))       
+        self.test = creat_data(test_data_dir, 32)
         self.epoch = num_epoch
-        self.net = net
         self.num = num_clients
         # self.loss = loss
-        # self.updater = updater
+        self.updater = copy.deepcopy(updater)  #in str format
         self.client = []
-        self.server = FL_server(net)
+        self.server = FL_server(net, self.test)
+        temp = copy.deepcopy(self.server.net.state_dict())
+            
         for i in range(num_clients):
-            self.client.append(FL_clients(net, train_data, test_data, loss, updater))
-            self.client[i].update_in_weight(self.server.sum_w)
+            self.client.append(FL_clients(net, self.train[i], self.test, loss, updater))
+            self.client[i].apply_dict(temp)
+            
+        # self.f = None
+        # if log_on:
+        #     if not os.path.exists('./log'):
+        #         os.mkdir('./log')
+        #     self.f = open(os.path.join(os.path.abspath('./log'), format(time.strftime("%Y-%m-%d %H:%M:%S"))+'train.log' ), "w")
             
     def round_w (self) -> list:
+        print('training on', self.device)
         temp_weight = []
         for i in range(self.num):
-            self.client[i].train_epoch(1)
-            temp_weight.append(self.client[i].show_weight())
+            print("in client %d" %i,end='')
+            self.client[i].train_epoch(self.device)
+            temp_weight.append(copy.deepcopy(self.client[i].net.state_dict()))
         return temp_weight
         
-    def round_g (self) -> list:
+    def round_g (self) -> list:# need to fix
         temp_grad = []
         for i in range(self.num):
             self.client[i].train_epoch(1)
@@ -223,18 +269,23 @@ class FL_system():
         pass
     
     def fl_avg_w(self):
-        sum = []
+        sum = dict()
         tmp = self.round_w()
+        if self.device == 'cuda:0':
+            torch.cuda.empty_cache()
         for i in tmp:
             if sum:
-                for a, b in zip(sum, i):
-                    a += b
+                for a, b in zip(i, sum):
+                    assert a == b
+                    sum[b] += i[a]
             else:
-                sum = i
-                
-        for i, para in enumerate(self.server.nets.parameters()) :
-            sum[i] /= len(tmp)
-            para.data = sum[i]
+                sum = copy.deepcopy(i)           
+                            
+        for ae in sum:
+            sum[ae] = torch.div(sum[ae], len(tmp))
+            
+        self.server.apply_dict(sum)
+        self.server.eval_test()
         
-        for i in self.num:
-            client[i].apply_net(self.server.nets)
+        for i in range(self.num):
+            self.client[i].apply_dict(sum)
