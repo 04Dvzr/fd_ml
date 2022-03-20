@@ -90,16 +90,9 @@ class FL_server():
         self.net.apply(init_weights)
         self.data = test_data      
                
-    def __str__(self):
-        return ("net: {}; num: {}; list: {}; adder: {}".format(self.nets, self.num, self.list_p, self.sum_w))
-        
-    def __getitem__(self, index):
-        assert (index < self.num)
-        return self.list_p[index]
-
-    def eval_test(self):
+    def eval_test(self) -> str:
         test_acc = evaluate_accuracy(self.net, self.data)                                                                      
-        print("server test_acc = %.3f" %(test_acc))
+        return "server test_acc = %.3f" %(test_acc)
     
     def apply_dict(self, dict : dict):
         self.net.load_state_dict(copy.deepcopy(dict))
@@ -163,7 +156,7 @@ class FL_clients():
         return train_l, train_acc    
     
     def train_epoch (self, device=None):
-        if device == None:
+        if device == None or device == 'cpu':
             train_loss, train_acc = self.train_batch()            
             test_acc = evaluate_accuracy(self.net, self.test)
         else:
@@ -171,14 +164,15 @@ class FL_clients():
             train_loss, train_acc = self.train_batch_gpu(device)
             test_acc = evaluate_accuracy_gpu(self.net, self.test)
             self.net.to('cpu')
-        print(" , train_loss = %.3f, train_acc = %.3f, test_acc = %.3f" %(train_loss, train_acc, test_acc))
-        torch.cuda.empty_cache()
+            torch.cuda.empty_cache()
+        # print(", train_loss = %.3f, train_acc = %.3f, test_acc = %.3f" % (train_loss, train_acc, test_acc))
+        return ", train_loss = %.3f, train_acc = %.3f, test_acc = %.3f\n" % (train_loss, train_acc, test_acc)
     
     def train_epoch_mul (self, num, device=None):
         train_loss = 0.0
         train_acc = 0.0
         test_acc = 0.0
-        if device == None:
+        if device == None or device == 'cpu':
             for _ in range(num):
                 loss, acc = self.train_batch()
                 train_loss += loss  
@@ -192,8 +186,9 @@ class FL_clients():
                 train_acc  += acc
                 test_acc += evaluate_accuracy_gpu(self.net, self.test)
                 self.net.to('cpu')
-            torch.cuda.empty_cache()
-        print(" , train_loss = %.3f, train_acc = %.3f, test_acc = %.3f" %(train_loss/num, train_acc/num, test_acc/num))
+                torch.cuda.empty_cache()
+        # print(", train_loss = %.3f, train_acc = %.3f, test_acc = %.3f" %(train_loss/num, train_acc/num, test_acc/num))
+        return ", train_loss = %.3f, train_acc = %.3f, test_acc = %.3f\n" % (train_loss/num, train_acc/num, test_acc/num)
             
     def show_weight (self):
         temp = []
@@ -217,12 +212,12 @@ class FL_clients():
                
     def eval_test(self):
         test_acc = evaluate_accuracy(self.net, self.test)                                                                      
-        print("client test_acc = %.3f" %(test_acc))
+        return "server test_acc = %.3f" %(test_acc)
         
 
     
 class FL_system():
-    def __init__(self, train_data_dir, test_data_dir, net, loss, updater:str, num_clients, num_epoch, log_on : bool = False) -> None:
+    def __init__(self, train_data_dir, test_data_dir, net, loss, updater : str, num_clients : int, num_sub_epoch : int = 1 , log_on : bool = False) -> None:
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.train = []
         tr_list = os.listdir(os.path.abspath(train_data_dir))
@@ -230,7 +225,7 @@ class FL_system():
         for dir in tr_list:
             self.train.append(creat_data(os.path.join(os.path.abspath(train_data_dir), dir) , 32, shuffles=True))       
         self.test = creat_data(test_data_dir, 32)
-        self.epoch = num_epoch
+        self.sub_epoch = num_sub_epoch
         self.num = num_clients
         # self.loss = loss
         self.updater = copy.deepcopy(updater)  #in str format
@@ -242,19 +237,31 @@ class FL_system():
             self.client.append(FL_clients(net, self.train[i], self.test, loss, updater))
             self.client[i].apply_dict(temp)
             
-        # self.f = None
-        # if log_on:
-        #     if not os.path.exists('./log'):
-        #         os.mkdir('./log')
-        #     self.f = open(os.path.join(os.path.abspath('./log'), format(time.strftime("%Y-%m-%d %H:%M:%S"))+'train.log' ), "w")
+        self.f = None
+        if log_on:
+            if not os.path.exists('./log'):
+                os.mkdir('./log')
+            self.f = open(os.path.join(os.path.abspath('./log'), time.strftime("%Y-%m-%d_%H-%M-%S")+'_train.log'), 'w')
+        print('training on', self.device)
             
     def round_w (self) -> list:
-        print('training on', self.device)
+        if self.f :
+            self.f.write('training on ' + str(self.device) + '\n')
         temp_weight = []
-        for i in range(self.num):
-            print("in client %d" %i,end='')
-            self.client[i].train_epoch(self.device)
-            temp_weight.append(copy.deepcopy(self.client[i].net.state_dict()))
+        if self.sub_epoch > 1:
+            for i in range(self.num):
+                st = self.client[i].train_epoch(self.device)
+                print("in client %d" %i + st, end='')
+                if self.f :
+                    self.f.write("in client %d" %i + st)                
+                temp_weight.append(copy.deepcopy(self.client[i].net.state_dict()))
+        else:
+            for i in range(self.num):
+                st = self.client[i].train_epoch_mul(self.sub_epoch, self.device)
+                print("in client %d" %i + st, end='')
+                if self.f :
+                    self.f.write("in client %d" %i + st)                        
+                temp_weight.append(copy.deepcopy(self.client[i].net.state_dict()))
         return temp_weight
         
     def round_g (self) -> list:# need to fix
