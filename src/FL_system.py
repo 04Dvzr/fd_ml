@@ -97,7 +97,7 @@ class FL_server():
     def apply_dict(self, dict : dict):
         self.net.load_state_dict(copy.deepcopy(dict))
             
-    def show_weight (self):
+    def show_weight (self) -> list:
         temp = []
         for t in self.net.parameters():
             temp.append(t.data.clone())
@@ -155,7 +155,7 @@ class FL_clients():
         self.net.to('cpu')
         return train_l, train_acc    
     
-    def train_epoch (self, device=None):
+    def train_epoch (self, device=None) -> str:
         if device == None or device == 'cpu':
             train_loss, train_acc = self.train_batch()            
             test_acc = evaluate_accuracy(self.net, self.test)
@@ -168,7 +168,7 @@ class FL_clients():
         # print(", train_loss = %.3f, train_acc = %.3f, test_acc = %.3f" % (train_loss, train_acc, test_acc))
         return ", train_loss = %.3f, train_acc = %.3f, test_acc = %.3f\n" % (train_loss, train_acc, test_acc)
     
-    def train_epoch_mul (self, num, device=None):
+    def train_epoch_mul (self, num, device=None) -> str:
         train_loss = 0.0
         train_acc = 0.0
         test_acc = 0.0
@@ -190,7 +190,7 @@ class FL_clients():
         # print(", train_loss = %.3f, train_acc = %.3f, test_acc = %.3f" %(train_loss/num, train_acc/num, test_acc/num))
         return ", train_loss = %.3f, train_acc = %.3f, test_acc = %.3f\n" % (train_loss/num, train_acc/num, test_acc/num)
             
-    def show_weight (self):
+    def show_weight (self) -> list:
         temp = []
         for t in self.net.parameters():
             temp.append(t.data.clone())
@@ -267,7 +267,7 @@ class FL_system():
     def round_g (self) -> list:# need to fix
         temp_grad = []
         for i in range(self.num):
-            self.client[i].train_epoch(1)
+            self.client[i].train_epoch()
             temp_grad.append(self.client[i].show_grad())
         return temp_grad
     
@@ -292,7 +292,10 @@ class FL_system():
             sum[ae] = torch.div(sum[ae], len(tmp))
             
         self.server.apply_dict(sum)
-        self.server.eval_test()
+        val = self.server.eval_test()
+        print(val)
+        if self.f :            
+            self.f.write(val + '\n')                        
         
         for i in range(self.num):
             self.client[i].apply_dict(sum)
