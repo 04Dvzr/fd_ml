@@ -85,7 +85,7 @@ def data_create_niid(image_folder_dir, dst_folder_dir, num_of_batch, batch_size,
         for y in img_kinds_list:   
             if y != img_kinds_list[main_lebel]:
                 if other_list[num_sub_files] == 0:
-                    continue
+                    pass
                 sub_data_dir = os.path.join(data_dir, y)     
                 if not os.path.exists(sub_data_dir):
                     os.makedirs(sub_data_dir)
@@ -139,4 +139,4 @@ if __name__ == '__main__':
         sys.exit(-1)
     data_create_niid(sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6]))        
     data_create_iid(sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[6]))
-
+    # data_create_niid('./data/source', './data/res3', int(10), int(200), int(85), int(83381863487))       
