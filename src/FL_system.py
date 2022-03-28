@@ -289,8 +289,7 @@ class FL_clients():
         test_acc = evaluate_accuracy(self.net, self.test)                                                                      
         return "server test_acc = %.3f" %(test_acc)
         
-
-    
+   
 class FL_system():
     def __init__(self, train_data_dir : str, test_data_dir : str, net, loss, updater : str, num_clients : int, num_sub_epoch : int = 1 , log_on : bool = False) -> None:
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
