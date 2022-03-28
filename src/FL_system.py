@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.utils import data as _data
 import copy, os, sys, time, re
 import torch.utils.tensorboard as tb
+from PIL import Image
 
 argmax = lambda x, *args, **kwargs: x.argmax(*args, **kwargs)
 astype = lambda x, *args, **kwargs: x.type(*args, **kwargs)
@@ -49,19 +50,93 @@ def evaluate_accuracy_gpu(net, data_iter, device=None):
             metric.add(accuracy(net(X), y), size(y))
     return metric[0] / metric[1]
 
-def creat_data (train_dir, batch_size=16, shuffles=False):
+def creat_data (train_dir : str, batch_size : int = 16, shuffles : bool = False, default : bool = False):
     if shuffles:        
         # rans = torchvision.transforms.Compose([torchvision.transforms.Grayscale(), torchvision.transforms.Resize((28, 28),), torchvision.transforms.ToTensor()])
         rans = torchvision.transforms.Compose([torchvision.transforms.Resize((224, 224),), torchvision.transforms.AutoAugment(), torchvision.transforms.ToTensor()])
     else:
         rans = torchvision.transforms.Compose([torchvision.transforms.Resize((224, 224),), torchvision.transforms.ToTensor()])
         # rans = torchvision.transforms.Compose([torchvision.transforms.Grayscale(), torchvision.transforms.Resize((28, 28),), torchvision.transforms.ToTensor()])
-    tr = torchvision.datasets.ImageFolder(os.path.abspath(train_dir), transform=rans)
     
+    if default:
+        tr = torchvision.datasets.ImageFolder(os.path.abspath(train_dir), transform=rans)
+    else:
+        tr = classifer_dataset_folder(os.path.abspath(train_dir), trans = rans)
+        
     train = _data.DataLoader(tr, batch_size, shuffle=shuffles, num_workers=4)
     
     return train
 
+class classifer_dataset(_data.Dataset):
+    def __init__(self, path : str, trans = None, t_trans = None) -> None:
+        super().__init__()
+        self.path = os.path.abspath(path)
+        self.sample_list = os.listdir(self.path) 
+        self.trans = trans
+        self.t_trans = t_trans
+
+
+    def __getitem__(self, index):
+        img = Image.open(os.path.join(self.path, self.sample_list[index])).convert(mode = "RGB")
+        if self.trans is not None:
+            img = self.trans(img)
+            
+        if re.search('\\\\', self.path):
+            key_s = '\\'
+        else:
+            key_s = '/'
+            
+        if self.t_trans is not None:
+            label = self.t_trans(self.path.split(key_s)[-1])
+        else:
+            label = self.path.split(key_s)[-1][1:]
+        return img, label
+
+    def __len__(self):
+        return len(self.sample_list)
+ 
+ 
+class classifer_dataset_folder(_data.Dataset):
+    def __init__(self, path : str, trans = None, t_trans = None) -> None:
+        super().__init__()
+        self.path = os.path.abspath(path)
+        self.kind_list = os.listdir(self.path)
+        assert len(self.kind_list) > 0
+        self.trans = trans
+        self.t_trans = t_trans
+        self.sample_list = []
+        self.sample_num_index = []
+        for i, dir in enumerate(self.kind_list) :
+            self.sample_list.append(os.listdir(os.path.join(self.path, dir)))
+            self.sample_num_index.append(len(self.sample_list[i]))
+        
+    def __getitem__(self, index):
+        tem = index
+        for i, num in enumerate(self.sample_num_index):
+            tem -= num
+            if(tem < 0):
+                count = i
+                break
+            else:
+                index = tem
+                
+        img = Image.open(os.path.join(self.path, self.kind_list[count], self.sample_list[count][index])).convert(mode = "RGB")
+        # img = img2.convert(mode='RGB')
+        if self.trans is not None:
+            img = self.trans(img)
+                        
+        if self.t_trans is not None:
+            label = self.t_trans(self.kind_list[count])
+        else:
+            label = torch.tensor(int(self.kind_list[count][1:]))
+        return img, label
+        
+        
+        
+    def __len__(self):
+        return sum(self.sample_num_index)
+ 
+    
 class Accumulator:
     """For accumulating sums over `n` variables."""
     def __init__(self, n):
@@ -217,7 +292,7 @@ class FL_clients():
 
     
 class FL_system():
-    def __init__(self, train_data_dir, test_data_dir, net, loss, updater : str, num_clients : int, num_sub_epoch : int = 1 , log_on : bool = False) -> None:
+    def __init__(self, train_data_dir : str, test_data_dir : str, net, loss, updater : str, num_clients : int, num_sub_epoch : int = 1 , log_on : bool = False) -> None:
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.train = []
         tr_list = os.listdir(os.path.abspath(train_data_dir))
@@ -243,10 +318,10 @@ class FL_system():
                 os.mkdir('./log')
             self.f = open(os.path.join(os.path.abspath('./log'), time.strftime("%Y-%m-%d_%H-%M-%S")+'_train.log'), 'w')
         print('training on', self.device)
-            
-    def round_w (self) -> list:
         if self.f :
             self.f.write('training on ' + str(self.device) + '\n')
+            
+    def round_w (self) -> list:
         temp_weight = []
         if self.sub_epoch > 1:
             for i in range(self.num):

@@ -79,10 +79,15 @@ class log_pro():
                 ser_f.write(strs)
                 
             elif re.search('.*client', strs):
-                client_list[int(strs[10])].write(strs[13:])
-                self.writer.add_scalar('client_{n} train_loss'.format(n = int(strs[10])), float(strs[26:31]), epoch)
-                self.writer.add_scalar('client_{n} train_acc'.format(n = int(strs[10])), float(strs[45:50]), epoch)
-                self.writer.add_scalar('client_{n} test_acc'.format(n = int(strs[10])), float(strs[63:68]), epoch)
+                t = 11
+                a = strs[10]
+                while strs[t] != ',':
+                    a += strs[t]
+                    t += 1    
+                client_list[int(a)].write(strs[t + 2:])
+                self.writer.add_scalar('client_{n} train_loss'.format(n = int(a)), float(strs[t + 15:t + 20]), epoch)
+                self.writer.add_scalar('client_{n} train_acc'.format(n = int(a)), float(strs[t + 34:t + 39]), epoch)
+                self.writer.add_scalar('client_{n} test_acc'.format(n = int(a)), float(strs[t + 52:t + 57]), epoch)
                 
             elif re.search('server.*', strs):
                 ser_f.write(strs)
