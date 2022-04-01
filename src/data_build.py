@@ -6,7 +6,7 @@ import math
 from functools import reduce
 
 #从source_dir复制num个jpg图片到data_dir
-def data_copy(source_dir, data_dir, num, seed = 123456789):
+def data_copy(source_dir : str, data_dir : str, num : int, seed : int = 123456789):
     files = os.listdir(os.path.abspath(source_dir))
     if num >= len(files) / 2:
         num_files = math.floor(len(files) / 2)
@@ -31,7 +31,7 @@ def data_copy(source_dir, data_dir, num, seed = 123456789):
     # print("copy done")
     
 #生成指定和为maxValue的num个随机数(适用于多0，种类数目大于抽样个数的)
-def random_fixed (maxValue, num, seed, sigma = 2.0):
+def random_fixed (maxValue : int, num : int, seed : int, sigma : float = 2.0):
     a = [0]
     for x in range(num):
         sum_v = reduce(lambda x,y:x+y,a)
@@ -43,7 +43,7 @@ def random_fixed (maxValue, num, seed, sigma = 2.0):
     return a  
     
  #生成指定和为maxValue的num个随机数(适用于平均化，种类数目小于抽样个数的)   
-def random_num_with_fix_total(maxValue, num, seed):
+def random_num_with_fix_total(maxValue : int, num : int, seed : int):
     '''生成总和固定的整数序列
     maxvalue: 序列总和
     num：要生成的整数个数'''
@@ -56,7 +56,7 @@ def random_num_with_fix_total(maxValue, num, seed):
     return b
 
     
-def data_create_niid(image_folder_dir, dst_folder_dir, num_of_batch, batch_size, IID_rate, seed = 123456789):     
+def data_create_niid(image_folder_dir : str, dst_folder_dir : str, num_of_batch : int, batch_size : int, IID_rate : int, seed : int = 123456789):     
     img_kinds_list = os.listdir(os.path.abspath(image_folder_dir))
     if IID_rate < 50:
         print("make rate higher than 50")
@@ -98,7 +98,7 @@ def data_create_niid(image_folder_dir, dst_folder_dir, num_of_batch, batch_size,
     print("data non iid create done")
     
     
-def data_create_iid(image_folder_dir, dst_folder_dir, num_of_batch, batch_size, seed = 123456789):  
+def data_create_iid(image_folder_dir : str, dst_folder_dir : str, num_of_batch : int, batch_size : int, seed : int = 123456789):  
     img_kinds_list = os.listdir(os.path.abspath(image_folder_dir))
     for x in range(num_of_batch):
         data_dir = os.path.join(os.path.abspath(dst_folder_dir), (r'data_iid_' + str(x)))
@@ -111,8 +111,7 @@ def data_create_iid(image_folder_dir, dst_folder_dir, num_of_batch, batch_size, 
         elif batch_size <= len(img_kinds_list) * 3:
             other_list = random_num_with_fix_total(batch_size, len(img_kinds_list), seed + x)
         else:
-            val = batch_size // len(img_kinds_list) 
-            other_list = [val - 1] * len(img_kinds_list)
+            other_list = [batch_size // len(img_kinds_list) - 1] * len(img_kinds_list)
             remians = batch_size % len(img_kinds_list) 
             for i in range(remians + len(img_kinds_list)):
                 random.seed(seed + i)

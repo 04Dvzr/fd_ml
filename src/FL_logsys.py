@@ -4,7 +4,7 @@ import torch.utils.tensorboard as tb
 
 
 class log_pro():
-    def __init__(self, log_dir) -> None:
+    def __init__(self, log_dir : str) -> None:
         self.path = os.path.abspath(log_dir)
         
         self.log_list = []
@@ -49,7 +49,7 @@ class log_pro():
                 key_s = '/'
             print('current file is: {st}'.format(st = self.sec_path.split(key_s)[-1][12:]))
             
-    def change_file(self, num):
+    def change_file(self, num : int):
         self.file.close()
         self.writer.close()
         

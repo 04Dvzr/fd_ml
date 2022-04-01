@@ -180,7 +180,7 @@ class FL_server():
 
     
 class FL_clients():
-    def __init__(self, nets, train_data, test_data, loss_func, updata) -> None:
+    def __init__(self, nets, train_data : str, test_data : str, loss_func, updata : str) -> None:
             self.net = copy.deepcopy(nets)
             self.data = train_data
             self.test = test_data
