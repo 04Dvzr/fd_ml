@@ -4,7 +4,7 @@ from torch.utils import data as _data
 import copy, os, sys, time, re
 import torch.utils.tensorboard as tb
 from PIL import Image
-import MNIST_data as m
+import src.MNIST_data as m
 
 argmax = lambda x, *args, **kwargs: x.argmax(*args, **kwargs)
 astype = lambda x, *args, **kwargs: x.type(*args, **kwargs)
