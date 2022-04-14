@@ -4,6 +4,7 @@ from torch.utils import data as _data
 import copy, os, sys, time, re
 import torch.utils.tensorboard as tb
 from PIL import Image
+import MNIST_data as m
 
 argmax = lambda x, *args, **kwargs: x.argmax(*args, **kwargs)
 astype = lambda x, *args, **kwargs: x.type(*args, **kwargs)
@@ -291,14 +292,19 @@ class FL_clients():
         
    
 class FL_system():
-    def __init__(self, train_data_dir : str, test_data_dir : str, net, loss, updater : str, num_clients : int, num_sub_epoch : int = 1 , log_on : bool = False) -> None:
+    def __init__(self, train_data_dir : str, test_data_dir : str, data_kind : str, net, loss, updater : str, num_clients : int, num_sub_epoch : int = 1, log_on : bool = False) -> None:
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.train = []
-        tr_list = os.listdir(os.path.abspath(train_data_dir))
-        assert len(tr_list) >= num_clients
-        for dir in tr_list:
-            self.train.append(creat_data(os.path.join(os.path.abspath(train_data_dir), dir) , 32, shuffles=True))       
-        self.test = creat_data(test_data_dir, 32)
+        if data_kind == 'image':
+            tr_list = os.listdir(os.path.abspath(train_data_dir))
+            assert len(tr_list) >= num_clients
+            for dir in tr_list:
+                self.train.append(creat_data(os.path.join(os.path.abspath(train_data_dir), dir) , 32, shuffles=True))       
+            self.test = creat_data(test_data_dir, 32)
+        elif data_kind == 'mnist':
+            self.train = m.data_folder(train_data_dir, batch=128, kind='train')
+            self.test = m.data_folder(test_data_dir, batch=128, kind='test')
+            
         self.sub_epoch = num_sub_epoch
         self.num = num_clients
         # self.loss = loss
@@ -369,7 +375,8 @@ class FL_system():
         val = self.server.eval_test()
         print(val)
         if self.f :            
-            self.f.write(val + '\n')                        
+            self.f.write(val + '\n')
+        self.f.flush()
         
         for i in range(self.num):
             self.client[i].apply_dict(sum)

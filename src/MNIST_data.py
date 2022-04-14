@@ -4,7 +4,6 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 from functools import reduce
 
-
 def read_file(dir_img : str, dir_lb : str, dst : str, num_kinds : int):
     fb = open(os.path.abspath(dir_lb), 'rb')
     dst_path = os.path.abspath(dst)
@@ -70,8 +69,8 @@ def sample(dir_img : str, dst : str, nums_client : int, num_file : int, iid : bo
         sum_list.append(os.path.getsize(os.path.join(img_path, i, 'image')) // 784)
         
     for i in range(nums_client):
-        f = open(os.path.join(dst_path, 'data_{s}'.format(s = i)), 'wb')
-        f_l = open(os.path.join(dst_path, 'data_{s}_label'.format(s = i)), 'w')
+        f = open(os.path.join(dst_path, 'data_{s:04d}'.format(s = i)), 'wb')
+        f_l = open(os.path.join(dst_path, 'data_{s:04d}_label'.format(s = i)), 'w')
         index_list = [0] * len(label_list)
         if iid: 
             index_list = [num_file // len(label_list) - 1] * len(label_list)
@@ -98,12 +97,12 @@ def sample(dir_img : str, dst : str, nums_client : int, num_file : int, iid : bo
             for ind in a:
                 file_list[id].seek(ind * 784)
                 f.write(file_list[id].read(784))
-            print(a, end='\n\n')
         
         f.close()
         
     for f_s in file_list:
         f_s.close()
+
 
 class MNIST_like(Dataset):
     """Some Information about MyDataset"""
@@ -139,13 +138,14 @@ def creat_data_MNIST (dir : str, lb_dir : str, transform = None, batch_size : in
     if not transform:
         transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(), torchvision.transforms.Normalize((0.1307,), (0.3081,))])
     data = MNIST_like(dir, lb_dir, transform)
-    return DataLoader(data, batch_size, shuffle=shuffles, num_workers=4)    
-    
-def data_folder(dir : str, transform = None):
+    return DataLoader(data, batch_size, shuffle=shuffles, num_workers=4)
+
+def data_folder(dir : str, transform = None, batch : int = 16, kind : str = 'train'):
     file_list = os.listdir(os.path.abspath(dir))
-    
-    datas = []
-    for fs in [file_list[i:i + 2] for i in range(0, len(file_list), 2)]:
-        datas.append(MNIST_like(os.path.join(dir, fs[0]), os.path.join(dir, fs[1]), transform))
-    return datas    
-    
+    if kind == 'train':        
+        datas = []
+        for fs in [file_list[i:i + 2] for i in range(0, len(file_list), 2)]:
+            datas.append(creat_data_MNIST(os.path.join(dir, fs[0]), os.path.join(dir, fs[1]), transform, batch, shuffles=True))
+        return datas
+    else:
+        return creat_data_MNIST(os.path.join(dir, file_list[0]), os.path.join(dir, file_list[1]), transform, batch)
